@@ -1,0 +1,4 @@
+FROM scratch
+COPY build/authsvc.bin /authsvc
+VOLUME [ "/var" ]
+ENTRYPOINT [ "/authsvc" ]

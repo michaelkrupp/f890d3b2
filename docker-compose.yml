@@ -1,0 +1,39 @@
+version: '3.8'
+
+services:
+  authsvc:
+    build:
+      context: .
+      dockerfile: Dockerfile.authsvc
+    container_name: authsvc
+    ports:
+      - "8081:8081"
+    networks:
+      - demo
+    environment:
+      - DEMO_LOG_LEVEL=debug
+      - DEMO_HTTP_SERVER_ADDR=:8081
+    volumes:
+      - ./var:/var
+    
+  imagesvc:
+    build:
+      context: .
+      dockerfile: Dockerfile.imagesvc
+    container_name: imagesvc
+    ports:
+      - "8080:8080"
+    networks:
+      - demo
+    environment:
+      - DEMO_LOG_LEVEL=debug
+      - DEMO_HTTP_SERVER_ADDR=:8080
+      - DEMO_AUTH_CLIENT_AUTH_URL=http://authsvc:8081/auth/validate
+    depends_on:
+      - authsvc  # Ensure API service is started first
+    volumes:
+      - ./var:/var
+
+networks:
+  demo:
+    driver: bridge

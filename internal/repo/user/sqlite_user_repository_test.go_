@@ -1,0 +1,198 @@
+//go:build integration || all
+
+package user_test
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"testing"
+	"time"
+
+	"github.com/mkrupp/homecase-michael/internal/domain"
+	"github.com/mkrupp/homecase-michael/internal/infra/logging"
+	. "github.com/mkrupp/homecase-michael/internal/repo/user"
+)
+
+func setupTestRepository(t *testing.T) (*SQLiteUserRepository, func()) {
+	t.Helper()
+
+	logging.Configure(context.TODO(), logging.LoggerConfig{
+		OutputHandle: os.Stderr,
+		Level:        "debug",
+	}, "test")
+
+	// Create temp database file
+	dbFile, err := os.CreateTemp("", "usertest-*.db")
+	if err != nil {
+		t.Fatalf("failed to create temp file: %v", err)
+	}
+	dbFile.Close()
+
+	cfg := SQLiteUserRepositoryConfig{
+		DatabasePath: dbFile.Name(),
+	}
+
+	repo, err := NewSQLiteUserRepository(cfg)
+	if err != nil {
+		os.Remove(dbFile.Name())
+		t.Fatalf("failed to create repository: %v", err)
+	}
+
+	cleanup := func() {
+		repo.Close()
+		os.Remove(dbFile.Name())
+	}
+
+	return repo, cleanup
+}
+
+func TestSQLiteUserRepository_CreateUser(t *testing.T) {
+	t.Parallel()
+
+	repo, cleanup := setupTestRepository(t)
+	t.Cleanup(cleanup)
+
+	tests := []struct {
+		name         string
+		username     string
+		passwordHash []byte
+		wantErr      error
+	}{
+		{
+			name:         "creates new user",
+			username:     "testuser",
+			passwordHash: []byte("hashedpassword"),
+			wantErr:      nil,
+		},
+		{
+			name:         "fails for duplicate username",
+			username:     "testuser",
+			passwordHash: []byte("differenthash"),
+			wantErr:      domain.ErrUserAlreadyExists,
+		},
+		{
+			name:         "creates user with empty password",
+			username:     "emptypass",
+			passwordHash: []byte{},
+			wantErr:      nil,
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			err := repo.CreateUser(context.Background(), tt.username, tt.passwordHash)
+			if !errors.Is(err, tt.wantErr) {
+				t.Errorf("CreateUser() error = %v, want %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestSQLiteUserRepository_GetUserByUsername(t *testing.T) {
+	t.Parallel()
+
+	repo, cleanup := setupTestRepository(t)
+	t.Cleanup(cleanup)
+
+	// Create test user
+	testUser := struct {
+		username     string
+		passwordHash []byte
+	}{
+		username:     "existinguser",
+		passwordHash: []byte("testhash"),
+	}
+
+	if err := repo.CreateUser(context.Background(), testUser.username, testUser.passwordHash); err != nil {
+		t.Fatalf("failed to create test user: %v", err)
+	}
+
+	tests := []struct {
+		name     string
+		username string
+		wantUser bool
+		wantErr  error
+	}{
+		{
+			name:     "finds existing user",
+			username: testUser.username,
+			wantUser: true,
+			wantErr:  nil,
+		},
+		{
+			name:     "returns not found for non-existent user",
+			username: "nonexistent",
+			wantUser: false,
+			wantErr:  domain.ErrUserNotFound,
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			user, ok, err := repo.GetUserByUsername(context.Background(), tt.username)
+			if !errors.Is(err, tt.wantErr) {
+				t.Errorf("GetUserByUsername() error = %v, want %v", err, tt.wantErr)
+			}
+			if ok != tt.wantUser {
+				t.Errorf("GetUserByUsername() ok = %v, want %v", ok, tt.wantUser)
+			}
+			if tt.wantUser {
+				if user == nil {
+					t.Error("GetUserByUsername() user is nil, want non-nil")
+				} else {
+					if user.Username != tt.username {
+						t.Errorf("GetUserByUsername() username = %v, want %v", user.Username, tt.username)
+					}
+					if string(user.PasswordHash) != string(testUser.passwordHash) {
+						t.Error("GetUserByUsername() password hash mismatch")
+					}
+					if time.Now().Unix()-user.CreatedAt > 5 {
+						t.Error("GetUserByUsername() created_at is too old")
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestSQLiteUserRepository_Concurrency(t *testing.T) {
+	t.Parallel()
+
+	repo, cleanup := setupTestRepository(t)
+	t.Cleanup(cleanup)
+
+	// Test concurrent user creation
+	const numConcurrent = 10
+	errs := make(chan error, numConcurrent)
+
+	for i := 0; i < numConcurrent; i++ {
+		go func(n int) {
+			username := fmt.Sprintf("user%d", n)
+			err := repo.CreateUser(context.Background(), username, []byte("pass"))
+			errs <- err
+		}(i)
+	}
+
+	// Check results
+	for i := 0; i < numConcurrent; i++ {
+		if err := <-errs; err != nil {
+			t.Errorf("concurrent CreateUser() error = %v", err)
+		}
+	}
+
+	// Verify all users were created
+	for i := 0; i < numConcurrent; i++ {
+		username := fmt.Sprintf("user%d", i)
+		if _, ok, err := repo.GetUserByUsername(context.Background(), username); err != nil || !ok {
+			t.Errorf("user %s not found after concurrent creation", username)
+		}
+	}
+}

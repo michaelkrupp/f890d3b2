@@ -1,0 +1,74 @@
+linters:
+  disable:
+    - gci
+    - ireturn
+    - nonamedreturns
+    - tagalign
+    - mnd
+
+  # https://golangci-lint.run/usage/linters
+  presets:
+    - bugs
+    - comment
+    - complexity
+    - error
+    - format
+    - import
+    - metalinter
+    - module
+    - performance
+    - style
+    - test
+    - unused
+
+linters-settings:
+  depguard:
+    rules:
+      main:
+        list-mode: lax
+        deny:
+          - pkg: "math/rand$"
+            desc: use math/rand/v2
+
+  revive:
+    rules:
+      - name: "dot-imports"
+        disabled: true
+
+  varnamelen:
+    ignore-names:
+      - err
+      - ok
+      - db
+    ignore-decls:
+      - e error
+      - i int
+      - m map[string]int
+      - T any
+      - t testing.T
+      - w http.ResponseWriter
+      - r *http.Request
+      - r slog.Record
+      - wg sync.WaitGroup
+
+issues:
+  exclude-dirs:
+    - $GOMODCACHE
+  exclude-rules:
+    - path: _test\.go
+      linters:
+        - dupword
+        - err113
+        - errcheck
+        - exhaustruct
+        - funlen
+        - gocyclo
+        - gosec
+        - nestif
+        - nlreturn
+        - varnamelen
+        - wrapcheck
+        - wsl
+    - path: main.go
+      linters:
+        - gochecknoglobals

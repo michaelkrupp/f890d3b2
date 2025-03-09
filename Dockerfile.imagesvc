@@ -1,0 +1,4 @@
+FROM scratch
+COPY build/imagesvc.bin /imagesvc
+VOLUME [ "/var" ]
+ENTRYPOINT [ "/imagesvc" ]
